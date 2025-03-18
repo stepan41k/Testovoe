@@ -1,0 +1,19 @@
+version: "3.0"
+
+services:
+  music-library-server-app:
+    build: ./
+    command: ./wait-for-postgres.sh psql-music-library ./music-library-server-app
+    ports:
+      - 8020:8020
+    depends_on:
+      - psql-music-library
+    environment:
+      - DB_PASSWORD=${MY_DB_PASSWORD}
+  psql-music-library:
+    restart: always
+    image: postgres:latest
+    environment:
+      - POSTGRES_PASSWORD=${MY_DB_PASSWORD}
+    ports:
+      - 5452:5432

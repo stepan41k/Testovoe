@@ -1,0 +1,13 @@
+env: "local"
+
+db:
+    username: "postgres"
+    host: "psql-music-library"
+    port: "5432"
+    dbname: "postgres"
+    sslmode: "disable"
+
+http_server:
+    server_port: "0.0.0.0:8020"
+    timeout: 4s
+    idle_timeout: 60s
