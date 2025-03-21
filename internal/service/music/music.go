@@ -12,8 +12,8 @@ import (
 )
 
 type Music interface {
-	GetSongs(ctx context.Context, song models.Song) (songs []models.Song, err error)
-	GetTextSong(ctx context.Context, song models.Song) (verse models.Verse, err error)
+	GetSongs(ctx context.Context, song models.SongFilter) (songs []models.Song, err error)
+	GetTextSong(ctx context.Context, song models.SongLyrics) (verse string, err error)
 	DeleteSong(ctx context.Context, song models.Song) (id int64, err error)
 	UpdateSong(ctx context.Context, songDetails models.Song) (id int64, err error)
 	AddNewSong(ctx context.Context, song models.Song) (id int64, err error)
@@ -32,13 +32,13 @@ func New(music Music, log *slog.Logger) *MusicService {
 }
 
 
-func (m *MusicService) GetSongs(ctx context.Context, song models.Song) ([]models.Song, error) {
+func (m *MusicService) GetSongs(ctx context.Context, song models.SongFilter) ([]models.Song, error) {
 	const op = "service.music.GetSongs"
 
 	log := m.log.With(
 		slog.String("op", op),
-		slog.String("group", song.Group),
-		slog.String("song", song.Song),
+		slog.String("group", song.BandName),
+		slog.String("song", song.SongTitle),
 	)
 
 	log.Info("getting songs")
@@ -56,13 +56,13 @@ func (m *MusicService) GetSongs(ctx context.Context, song models.Song) ([]models
 }
 
 
-func (m *MusicService) GetTextSong(ctx context.Context, song models.Song) (models.Verse, error) {
+func (m *MusicService) GetTextSong(ctx context.Context, song models.SongLyrics) (string, error) {
 	const op = "service.music.GetTextSong"
 
 	log := m.log.With(
 		slog.String("op", op),
-		slog.String("group", song.Group),
-		slog.String("song", song.Song),
+		slog.String("group", song.BandName),
+		slog.String("song", song.SongTitle),
 	)
 
 	log.Info("getting text of song")
@@ -71,7 +71,7 @@ func (m *MusicService) GetTextSong(ctx context.Context, song models.Song) (model
 	if err != nil {
 		log.Error("failed to get text of song")
 
-		return models.Verse{}, fmt.Errorf("%s: %w", op, err)
+		return "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	log.Info("got text of song")
@@ -85,8 +85,8 @@ func (m *MusicService) DeleteSong(ctx context.Context, song models.Song) (int64,
 
 	log := m.log.With(
 		slog.String("op", op),
-		slog.String("group", song.Group),
-		slog.String("song", song.Song),
+		slog.String("group", song.BandName),
+		slog.String("song", song.SongTitle),
 	)
 
 	log.Info("deleting song")
@@ -109,8 +109,8 @@ func (m *MusicService) UpdateSong(ctx context.Context, songDetails models.Song)(
 
 	log := m.log.With(
 		slog.String("op", op),
-		slog.String("group", songDetails.Group),
-		slog.String("song", songDetails.Song),
+		slog.String("group", songDetails.BandName),
+		slog.String("song", songDetails.SongTitle),
 	)
 
 	log.Info("updating song")
@@ -133,8 +133,8 @@ func (m *MusicService) AddNewSong(ctx context.Context, song models.Song) (int64,
 
 	log := m.log.With(
 		slog.String("op", op),
-		slog.String("group", song.Group),
-		slog.String("song", song.Song),
+		slog.String("group", song.BandName),
+		slog.String("song", song.SongTitle),
 	)
 
 	log.Info("adding new song")

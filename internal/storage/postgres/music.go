@@ -4,19 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx"
 	"github.com/stepan41k/Testovoe/internal/domain/models"
 	"github.com/stepan41k/Testovoe/internal/storage"
 )
 
 const (
-	sizeOfPage = 10
 	sizeOfVerse = 1
 )
 
 
-func (s *PStorage) GetSongs(ctx context.Context, song models.Song) ([]models.Song, error) {
+func (s *PStorage) GetSongs(ctx context.Context, song models.SongFilter) ([]models.Song, error) {
 	const op = "storage.postgres.music.GetSongs"
 
 	tx, err := s.pool.Begin(ctx)
@@ -35,15 +36,46 @@ func (s *PStorage) GetSongs(ctx context.Context, song models.Song) ([]models.Son
 			err = fmt.Errorf("%s: %w", op, commitErr)
 		}
 	}()
+	
+	arguments, values, ind := []string{}, []any{}, 1
+	query := `SELECT band, song, TO_CHAR(release, 'DD.MM.YYYY'), lyrics, link FROM songs`
 
-	rows, err := tx.Query(ctx, `
-		SELECT * FROM songs
-		WHERE band LIKE $1
-		LIMIT $2
-		OFFSET $3;
-	`, song.Group, sizeOfPage, (song.Page-1)*sizeOfPage) 
+	if song.BandName != "" || song.SongTitle != "" || song.ReleaseDate != "" {
+		query += ` WHERE `
+		switch {
+		case song.SongTitle != "":
+			arguments = append(arguments, fmt.Sprintf(`song LIKE $%d`, ind))
+			values = append(values, song.SongTitle)
+			ind++
+		case song.BandName != "":
+			arguments = append(arguments, fmt.Sprintf(`band LIKE $%d`, ind))
+			values = append(values, song.BandName)
+			ind++
+		case song.ReleaseDate != "":
+			if song.Later {
+				arguments = append(arguments, fmt.Sprintf(`release > TO_DATE($%d, 'DD.MM.YYYY')`, ind))
+			} else if !song.Later {
+				arguments = append(arguments, fmt.Sprintf(`release <= TO_DATE($%d, 'DD.MM.YYYY')`, ind))
+			} else {
+				return nil, fmt.Errorf("%s: %w", op, storage.ErrNoChanges)
+			}
+			values = append(values, song.ReleaseDate)
+			ind++
+		}
+		query += strings.Join(arguments, ",")
+	} 
+
+	query += fmt.Sprintf(` LIMIT $%d OFFSET $%d;`, ind, ind+1)
+	values = append(values, song.PageSize, (song.Page-1)*song.PageSize)
+
+
+	rows, err := tx.Query(ctx, query, values...)
 
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%s: %w", op, storage.ErrSongNotFound)
+		}
+
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -52,29 +84,23 @@ func (s *PStorage) GetSongs(ctx context.Context, song models.Song) ([]models.Son
 	var songs []models.Song
 	for rows.Next() {
 		var item models.Song
-		err = rows.Scan(
-			&item.Group,
-			&item.Song,
-			&item.ReleaseDate,
-			&item.Text,
-			&item.Link,
-		)
+		err = rows.Scan(&item)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", op, err)
 		}
 		songs = append(songs, item)
 	}
-
+	
 	return songs, err
 }
 
 
-func (s *PStorage) GetTextSong(ctx context.Context, song models.Song) (models.Verse, error) {
+func (s *PStorage) GetTextSong(ctx context.Context, song models.SongLyrics) (string, error) {
 	const op = "storage.postgres.music.GetTextSong"
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return models.Verse{}, fmt.Errorf("%s: %w", op, err)
+		return "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	defer func() {
@@ -91,21 +117,21 @@ func (s *PStorage) GetTextSong(ctx context.Context, song models.Song) (models.Ve
 
 	row := tx.QueryRow(ctx, `
 		WITH split_text AS (
-                SELECT id, song, unnest(regexp_split_to_array(text, E'\n\n'))
+                SELECT song, band, unnest(regexp_split_to_array(lyrics, E'\n\n'))
         AS verse
                 FROM songs
         )
-        SELECT id, song, verse
+        SELECT verse
         FROM split_text
 		WHERE song = $1 AND band = $2
         LIMIT $3 OFFSET $4;
-	`, song.Song, song.Group, sizeOfVerse, song.Page)
+	`, song.SongTitle, song.BandName, sizeOfVerse, song.Verse-1)
 
-	var verse models.Verse
+	var verse string
 
-	err = row.Scan(&verse.ID, &verse.Song, &verse.Verse)
+	err = row.Scan(&verse)
 	if err != nil {
-		return models.Verse{}, fmt.Errorf("%s: %w", op, err)
+		return "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	return verse, nil
@@ -135,7 +161,8 @@ func (s *PStorage) DeleteSong(ctx context.Context, song models.Song) (id int64, 
 	row := tx.QueryRow(ctx, `
 		DELETE FROM songs
 		WHERE song = $1 AND band = $2
-	`, song.Song, song.Group)
+		RETURNING id;
+	`, song.SongTitle, song.BandName)
 
 	err = row.Scan(&id)
 	if err != nil {
@@ -166,17 +193,38 @@ func (s *PStorage) UpdateSong(ctx context.Context, song models.Song) (id int64, 
 		}
 	}()
 
-	row := tx.QueryRow(ctx, `
-		UPDATE songs (releaseDate, text, link)
-		SET ($1, $2, $3)
-		WHERE song = $4 AND band = $5;
-	`, song.ReleaseDate, song.Text, song.Link, song.Song, song.Group)
+	arguments, values, ind := []string{}, []any{}, 1
+	query := `UPDATE songs SET updated = NOW(), `
 
+	if song.BandName != "" || song.SongTitle != "" || song.ReleaseDate != "" {
+		switch {
+		case song.Link != "":
+			arguments = append(arguments, fmt.Sprintf(`link = $%d`, ind))
+			values = append(values, song.Link)
+			ind++
+		case song.Lyrics != "":
+			arguments = append(arguments, fmt.Sprintf(`lyrics = $%d`, ind))
+			values = append(values, song.Lyrics)
+			ind++
+		case song.ReleaseDate != "":
+			arguments = append(arguments, fmt.Sprintf(`release = TO_DATE($%d, 'DD.MM.YYYY')`, ind))
+			values = append(values, song.ReleaseDate)
+			ind++
+		}
+	} else {
+		return 0, fmt.Errorf("%s: %w", op, storage.ErrNoChanges)
+	}
+
+	query += strings.Join(arguments, ",")
+	query += fmt.Sprintf(` WHERE song = $%d AND band = $%d RETURNING id;`, ind, ind+1)
+	values = append(values, song.SongTitle, song.BandName)
+
+
+	row := tx.QueryRow(ctx, query, values...)
 	err = row.Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", op, err)
 	}
-
 	return id, nil
 }
 
@@ -202,10 +250,10 @@ func (s *PStorage) AddNewSong(ctx context.Context, song models.Song) (id int64, 
 	}()
 
 	row := tx.QueryRow(ctx, `
-		INSERT INTO songs (band, song)
-		VALUES ($1, $2)
+		INSERT INTO songs (band, song, updated)
+		VALUES ($1, $2, NOW())
 		RETURNING id;
-	`, song.Group, song.Song)
+	`, song.BandName, song.SongTitle)
 
 	err = row.Scan(&id)
 	if err != nil {
@@ -216,6 +264,5 @@ func (s *PStorage) AddNewSong(ctx context.Context, song models.Song) (id int64, 
 
 		return 0, fmt.Errorf("%s: %w", op, err)
 	}
-
 	return id, nil
 }

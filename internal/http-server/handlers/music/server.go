@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,8 +18,8 @@ import (
 )
 
 type Music interface {
-	GetSongs(ctx context.Context, song models.Song) (songs []models.Song, err error)
-	GetTextSong(ctx context.Context, song models.Song) (verse models.Verse, err error)
+	GetSongs(ctx context.Context, song models.SongFilter) (songs []models.Song, err error)
+	GetTextSong(ctx context.Context, song models.SongLyrics) (verse string, err error)
 	DeleteSong(ctx context.Context, song models.Song) (id int64, err error)
 	UpdateSong(ctx context.Context, songDetails models.Song) (id int64, err error)
 	AddNewSong(ctx context.Context, song models.Song) (id int64, err error)
@@ -46,10 +47,13 @@ func (m *MusicHandler) GetSongs(ctx context.Context) http.HandlerFunc {
 			slog.String("request_id", middleware.GetReqID(r.Context())),
 		)
 
-		var req models.Song
+		var req models.SongFilter
 
 		err := render.Decode(r, &req)
-		CheckForErrors(req, w, r, log, err)
+		flag := CheckForErrors(req, w, r, log, err)
+		if flag {
+			return
+		}
 
 		songs, err := m.music.GetSongs(ctx, req)
 		if err != nil {
@@ -62,6 +66,8 @@ func (m *MusicHandler) GetSongs(ctx context.Context) http.HandlerFunc {
 
 			return
 		}
+
+		fmt.Println(songs)
 
 		render.JSON(w, r, resp.Response{
 			Status: http.StatusOK,
@@ -80,10 +86,13 @@ func (m *MusicHandler) GetTextSong(ctx context.Context) http.HandlerFunc {
 			slog.String("request_id", middleware.GetReqID(r.Context())),
 		)
 
-		var req models.Song
+		var req models.SongLyrics
 
 		err := render.Decode(r, &req)
-		CheckForErrors(req, w, r, log, err)
+		flag := CheckForErrors(req, w, r, log, err)
+		if flag {
+			return
+		}
 
 		verse, err := m.music.GetTextSong(ctx, req)
 
@@ -118,7 +127,10 @@ func (m *MusicHandler) DeleteSong(ctx context.Context) http.HandlerFunc {
 		var req models.Song
 
 		err := render.Decode(r, &req)
-		CheckForErrors(req, w, r, log, err)
+		flag := CheckForErrors(req, w, r, log, err)
+		if flag {
+			return
+		}
 
 		songID, err := m.music.DeleteSong(ctx, req)
 		if err != nil {
@@ -152,7 +164,10 @@ func (m *MusicHandler) UpdateSong(ctx context.Context) http.HandlerFunc {
 		var req models.Song
 
 		err := render.Decode(r, &req)
-		CheckForErrors(req, w, r, log, err)
+		flag := CheckForErrors(req, w, r, log, err)
+		if flag {
+			return
+		}
 
 		songID, err := m.music.UpdateSong(ctx, req)
 		if err != nil {
@@ -186,7 +201,10 @@ func (m *MusicHandler) AddNewSong(ctx context.Context) http.HandlerFunc {
 		var req models.Song
 
 		err := render.Decode(r, &req)
-		CheckForErrors(req, w, r, log, err)
+		flag := CheckForErrors(req, w, r, log, err)
+		if flag {
+			return
+		}
 
 		songID, err := m.music.AddNewSong(ctx, req)
 		if err != nil {
@@ -219,7 +237,7 @@ func (m *MusicHandler) AddNewSong(ctx context.Context) http.HandlerFunc {
 }
 
 
-func CheckForErrors(req any, w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {
+func CheckForErrors(req any, w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) bool {
 
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -230,7 +248,7 @@ func CheckForErrors(req any, w http.ResponseWriter, r *http.Request, log *slog.L
 				Error: "empty request",
 			})
 
-			return
+			return true
 		}
 
 		log.Error("failed to decode request")
@@ -238,7 +256,7 @@ func CheckForErrors(req any, w http.ResponseWriter, r *http.Request, log *slog.L
 			Status: http.StatusBadRequest,
 			Error: "failed to decode request",
 		})
-		return
+		return true
 	}
 
 	if err := validator.New().Struct(req); err != nil {
@@ -248,6 +266,8 @@ func CheckForErrors(req any, w http.ResponseWriter, r *http.Request, log *slog.L
 
 		render.JSON(w, r, resp.ValidationError(validateErr))
 
-		return
+		return true
 	}
+
+	return false
 }

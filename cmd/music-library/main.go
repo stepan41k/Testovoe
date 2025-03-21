@@ -46,13 +46,12 @@ func main() {
 	service := musicService.New(pool, log)
 	handler := musicHandler.New(service, log)
 
-	storagePathForMigrator := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?%s", cfg.Storage.Username, os.Getenv("MY_DB_PASSWORD"), cfg.Storage.Host, cfg.Storage.Port, cfg.Storage.DBName, cfg.Storage.SSLMode)
+	storagePathForMigrator := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", cfg.Storage.Username, os.Getenv("MY_DB_PASSWORD"), cfg.Storage.Host, cfg.Storage.Port, cfg.Storage.DBName, cfg.Storage.SSLMode)
 
 	migrator.NewMigrator(storagePathForMigrator, os.Getenv("MY_MIGRATIONS_PATH"))
 
-	router.Get("/songs", handler.GetSongs(context.Background()))
-
 	router.Route("/song", func(r chi.Router) {
+		r.Get("/songs", handler.GetSongs(context.Background()))
 		r.Get("/text", handler.GetTextSong(context.Background()))
 		r.Delete("/delete", handler.DeleteSong(context.Background()))
 		r.Put("/update", handler.UpdateSong(context.Background()))
